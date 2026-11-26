@@ -2,6 +2,8 @@
 common.py - maps shared by the CRLA and ELLNA cleaning scripts,
 so both files are cleaned with exactly the same labels.
 """
+import os
+
 import pandas as pd
 
 # Language labels as they appear in the raw files -> one standard name.
@@ -63,7 +65,6 @@ WORKBOOK = "CachoPredigua.xlsx"
 # Save a table to its own sheet. If the sheet is already there it is replaced;
 # the other sheets in the workbook are left alone.
 def save_sheet(table, sheet_name):
-    import os
     if os.path.exists(WORKBOOK):
         writer = pd.ExcelWriter(WORKBOOK, engine="openpyxl", mode="a", if_sheet_exists="replace")
     else:
