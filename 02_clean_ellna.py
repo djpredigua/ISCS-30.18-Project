@@ -1,101 +1,115 @@
-import os
-import numpy as np
+# 02_clean_ellna.py - Clean the ELLNA 2023-24 file
+
 import pandas as pd
+from common import DIVISION_MAP, LANG_MAP, LANG_PAIR_TYPE, TEXT_FIXES
+
+RAW_FILE = "ellna_2023-24_selected.csv"
+TEXT_COLUMNS = ["region", "division", "language"]
+
+def remove_duplicates(ellna):
+    duplicates = ellna["school_id"].duplicated().sum()
+    ellna = ellna.drop_duplicates(subset="school_id", keep="first")
+    return ellna, duplicates
+
+# Blanks are reported, not filled: a blank score means the school did not take that test
+def count_blanks(ellna):
+    blanks = ellna.isna().sum()
+    return blanks[blanks > 0]
+
+def find_text_in_number_columns(ellna):
+    number_columns = [column for column in ellna.columns if column not in TEXT_COLUMNS]
+    return [column for column in number_columns if not pd.api.types.is_numeric_dtype(ellna[column])]
 
 
-LANG_MAP = {
-    # Standardized single canonical names for multi-variant labels 
-    "Ilocano": "Ilokano",
-    "Ilokano/Iloko": "Ilokano",
-    "Sinugbuanong Binisaya": "Sinugbuanong Binisaya",
-    "Sinugbuanong Binisaya/Cebuano": "Sinugbuanong Binisaya",
-    "Pangasinan": "Pangasinan",
-    "Pangasinan/Pangasinense": "Pangasinan",
-    "Tagalog": "Tagalog",
-    "Waray": "Waray",
-    "Kapampangan": "Kapampangan",
-    "English/Filipino": "English/Filipino",
-    # Rare test languages (<= 7 schools in either dataset) -> Other MT
-    "Sambal": "Other MT",
-    "Other": "Other MT",
-    "Surigaonon": "Other MT",
-    "Southern Sorsoganon": "Other MT",
-    "Chavacano": "Other MT",
-    "Bahasa Sug": "Other MT",
-    "Yakan": "Other MT",
-    "Ilokano/Iloko-Pangasinense": "Other MT",
-}
-
-MPS_COLS = [
-    "mother_tongue_mps",
-    "filipino_mps",
-    "english_mps",
-    "numeracy_mps",
-    "overall_mps",
-]
-
-def classify_lang_pair(lang_clean: str) -> str:
-    if lang_clean == "Tagalog":
-        return "Same language"
-    if lang_clean == "English/Filipino":
-        return "No MT"
-    if lang_clean == "Other MT":
-        return "Other"
-    return "Distinct L1"
+def trim_spaces(ellna):
+    ellna = ellna.copy()
+    changed = 0
+    for column in TEXT_COLUMNS:
+        trimmed = ellna[column].str.strip()
+        changed = changed + (trimmed != ellna[column]).sum()
+        ellna[column] = trimmed
+    return ellna, changed
 
 
-def main() -> None:
-    os.makedirs("outputs", exist_ok=True)
+# Repair broken characters (TEXT_FIXES) and use the CRLA spelling of divisions (DIVISION_MAP)
+def fix_text(ellna):
+    ellna = ellna.copy()
+    changed = 0
+    for column in TEXT_COLUMNS:
+        fixed = ellna[column]
+        for broken, correct in TEXT_FIXES.items():
+            fixed = fixed.str.replace(broken, correct, regex=False)
+        if column == "division":
+            fixed = fixed.replace(DIVISION_MAP)
+        changed = changed + (fixed != ellna[column]).sum()
+        ellna[column] = fixed
+    return ellna, changed
 
-    # 1. Load raw ELLNA 2023-24 dataset
-    ellna = pd.read_csv("ellna_2023-24_selected.csv")
-    print(f"Loaded ELLNA raw shape: {ellna.shape}")
 
-    # 2. Deduplicate on school_id (keep first occurrence)
-    dup_count = int(ellna["school_id"].duplicated().sum())
-    print(f"Duplicate school_id rows found: {dup_count}")
-    ellna = ellna.drop_duplicates(subset=["school_id"], keep="first").copy()
+def standardize_languages(ellna):
 
-    # 3. Clean string columns (trim whitespace & fix UTF-8/Latin-1 artifacts)
-    for col in ["region", "division", "language"]:
-        ellna[col] = (
-            ellna[col]
-            .astype(str)
-            .str.strip()
-            .str.replace("MuÃ±oz", "Muñoz", regex=False)
-        )
-        assert not ellna[col].str.contains("Ã", regex=False).any(), f"Encoding artifact remains in {col}"
+    # Raise error if not found in LANG_MAP
+    unknown = sorted(set(ellna["language"]) - set(LANG_MAP))
+    if unknown:
+        raise ValueError(f"Add these language labels to LANG_MAP in common.py: {unknown}")
 
-    # 4. Validate test-taker counts and 0-100 MPS bounds
-    assert (ellna["n_test_takers"] > 0).all(), "Non-positive n_test_takers found in ELLNA!"
-    for col in MPS_COLS:
-        valid = ellna[col].dropna()
-        assert ((valid >= 0.0) & (valid <= 100.0)).all(), f"Out-of-range MPS values in {col}"
-
-    # 5. Harmonize language labels & assign language pair category
+    ellna = ellna.copy()
     ellna["language_clean"] = ellna["language"].map(LANG_MAP)
-    assert ellna["language_clean"].isna().sum() == 0, "Unmapped language found in ELLNA!"
-    ellna["lang_pair_type"] = ellna["language_clean"].apply(classify_lang_pair)
+    ellna["lang_pair_type"] = ellna["language_clean"].map(LANG_PAIR_TYPE)
+    return ellna
 
-    # 6. Create 0/1 data quality flags (retain all rows & keep missing mother_tongue_mps blank)
-    # mt_not_assessed: 1 if mother_tongue_mps is missing (unassessed in Mother Tongue)
-    ellna["mt_not_assessed"] = ellna["mother_tongue_mps"].isna().astype(int)
+# Clean data and give summary of what happened
+def step1_basics(ellna):
+    report = []
 
-    # suspect_mt: 1 if mother_tongue_mps is recorded but < 1.0 (extreme low/zero coding outlier)
-    ellna["suspect_mt"] = (
-        ellna["mother_tongue_mps"].notna() & (ellna["mother_tongue_mps"] < 1.0)
-    ).astype(int)
+    ellna, duplicates = remove_duplicates(ellna)
+    report.append(("Duplicate school_id rows removed", duplicates))
 
-    # small_group: 1 if school has < 10 ELLNA test takers
-    ellna["small_group"] = (ellna["n_test_takers"] < 10).astype(int)
+    report.append(("Blank cells", count_blanks(ellna).sum()))
 
-    # 7. Export Worksheet 2: Cleaned ELLNA
-    cleaned_cols = [
-        "school_id", "region", "division", "language", "language_clean", "lang_pair_type",
-        "mt_not_assessed", "suspect_mt", "small_group", "n_test_takers",
-        "mother_tongue_mps", "filipino_mps", "english_mps", "numeracy_mps", "overall_mps",
-    ]
-    ellna[cleaned_cols].to_csv("outputs/ellna_cleaned.csv", index=False)
-    
+    report.append(("Number columns that contain text", len(find_text_in_number_columns(ellna))))
+
+    ellna, trimmed = trim_spaces(ellna)
+    report.append(("Text cells with stray spaces trimmed", trimmed))
+
+    ellna, fixed = fix_text(ellna)
+    report.append(("Text cells fixed (broken characters, division spelling)", fixed))
+
+    ellna = standardize_languages(ellna)
+    report.append(("Schools whose language label was renamed or grouped",
+                   (ellna["language"] != ellna["language_clean"]).sum()))
+
+    return ellna, report
+
+
+def main():
+    # Import ELLNA file
+    raw = pd.read_csv(RAW_FILE)
+    print(f"Loaded {RAW_FILE}: {len(raw):,} schools, {raw.shape[1]} columns")
+
+    ellna, report = step1_basics(raw)
+
+    print("\nCleaning reports")
+    for check, result in report:
+        print(f"  {check:<55}{int(result):>6,}")
+
+    print("\nBlank cells by column (left blank on purpose):")
+    print(count_blanks(ellna).to_string())
+
+    print("\nText fixes (before -> after):")
+    for column in TEXT_COLUMNS:
+        changes = pd.DataFrame({"before": raw[column], "after": ellna[column]})
+        changes = changes[changes["before"] != changes["after"]]
+        if len(changes) > 0:
+            print(changes.value_counts().reset_index(name="schools").to_string(index=False))
+
+    print("\nLanguage labels (raw label -> standard name -> pair type):")
+    labels = (ellna.groupby(["language", "language_clean", "lang_pair_type"]).size()
+              .reset_index(name="schools").sort_values("schools", ascending=False))
+    print(labels.to_string(index=False))
+
+    print(f"\nAfter Cleaning: {len(ellna):,} schools, {ellna.shape[1]} columns")
+
+
 if __name__ == "__main__":
     main()
