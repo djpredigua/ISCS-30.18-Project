@@ -2,7 +2,6 @@ import os
 import numpy as np
 import pandas as pd
 
-
 LANG_MAP = {
     # Standardized single canonical names for multi-variant labels
     "Ilocano": "Ilokano",
@@ -118,58 +117,6 @@ def main() -> None:
         cleaned_cols.extend([f"{prefix}_{b}" for b in BAND_SUFFIXES] + [f"{prefix}_total"])
 
     crla[cleaned_cols].to_csv("outputs/crla_cleaned.csv", index=False)
-
-    # 8. Feature Engineering (0-100 mastery rates, proficiency gaps, collapsed 3-band counts)
-    fe = crla.copy()
-
-    # Mastery percentage features (0-100 scale; zero-denominator groups stay blank/NaN)
-    for prefix in GRADE_LANG_GROUPS:
-        fe[f"{prefix}_pct"] = np.where(
-            fe[f"{prefix}_total"] > 0,
-            100.0 * fe[f"{prefix}_at_grade_level"] / fe[f"{prefix}_total"],
-            np.nan,
-        )
-
-    early_tot = fe["g1_mt_total"] + fe["g2_mt_total"]
-    early_agl = fe["g1_mt_at_grade_level"] + fe["g2_mt_at_grade_level"]
-    fe["early_mt_pct"] = np.where(early_tot > 0, 100.0 * early_agl / early_tot, np.nan)
-
-    # Proficiency gap features (L2/L3 minus L1)
-    fe["gap_g3_fil_early_mt"] = fe["g3_fil_pct"] - fe["early_mt_pct"]
-    fe["gap_g3_eng_early_mt"] = fe["g3_eng_pct"] - fe["early_mt_pct"]
-    fe["gap_g2_fil_mt"] = fe["g2_fil_pct"] - fe["g2_mt_pct"]
-    fe["gap_g3_fil_mt"] = fe["g3_fil_pct"] - fe["g3_mt_pct"]
-    fe["gap_g3_eng_mt"] = fe["g3_eng_pct"] - fe["g3_mt_pct"]
-
-    # Collapsed 3-band counts across all 6 grade-language groups:
-    # Band 1: Emerging (Low + High Emerging)
-    # Band 2: Developing/Transitioning (Developing + Transitioning)
-    # Band 3: At Grade Level (already *_at_grade_level)
-    for prefix in GRADE_LANG_GROUPS:
-        fe[f"{prefix}_emerging"] = fe[f"{prefix}_low_emerging"] + fe[f"{prefix}_high_emerging"]
-        fe[f"{prefix}_dev_trans"] = fe[f"{prefix}_developing"] + fe[f"{prefix}_transitioning"]
-
-    fe_cols = [
-        "school_id", "region", "division", "language_clean", "lang_pair_type",
-        "mt_not_assessed", "mt_fil_identical", "small_group", "n_test_takers",
-        "g1_mt_at_grade_level", "g1_mt_total",
-        "g2_mt_at_grade_level", "g2_mt_total",
-        "g2_fil_at_grade_level", "g2_fil_total",
-        "g3_mt_at_grade_level", "g3_mt_total",
-        "g3_fil_at_grade_level", "g3_fil_total",
-        "g3_eng_at_grade_level", "g3_eng_total",
-        "g1_mt_pct", "g2_mt_pct", "g2_fil_pct", "g3_mt_pct", "g3_fil_pct", "g3_eng_pct", "early_mt_pct",
-        "gap_g3_fil_early_mt", "gap_g3_eng_early_mt", "gap_g2_fil_mt", "gap_g3_fil_mt", "gap_g3_eng_mt",
-    ]
-    for prefix in GRADE_LANG_GROUPS:
-        fe_cols.extend([f"{prefix}_emerging", f"{prefix}_dev_trans"])
-
-    fe[fe_cols].to_csv("outputs/crla_fe.csv", index=False)
-
-    print(f"Saved outputs/crla_cleaned.csv ({crla[cleaned_cols].shape}) and outputs/crla_fe.csv ({fe[fe_cols].shape})")
-    print("Flag totals:", fe[["mt_not_assessed", "mt_fil_identical", "small_group"]].sum().to_dict())
-    print("Language counts:", fe["language_clean"].value_counts().to_dict())
-
 
 if __name__ == "__main__":
     main()

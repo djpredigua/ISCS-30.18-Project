@@ -4,7 +4,7 @@ import pandas as pd
 
 
 LANG_MAP = {
-    # Standardized single canonical names for multi-variant labels (identical to 01_clean_crla.py)
+    # Standardized single canonical names for multi-variant labels 
     "Ilocano": "Ilokano",
     "Ilokano/Iloko": "Ilokano",
     "Sinugbuanong Binisaya": "Sinugbuanong Binisaya",
@@ -33,7 +33,6 @@ MPS_COLS = [
     "numeracy_mps",
     "overall_mps",
 ]
-
 
 def classify_lang_pair(lang_clean: str) -> str:
     if lang_clean == "Tagalog":
@@ -97,26 +96,6 @@ def main() -> None:
         "mother_tongue_mps", "filipino_mps", "english_mps", "numeracy_mps", "overall_mps",
     ]
     ellna[cleaned_cols].to_csv("outputs/ellna_cleaned.csv", index=False)
-
-    # 8. Feature Engineering (Proficiency gap features; stays blank/NaN when mother_tongue_mps is blank)
-    fe = ellna.copy()
-    fe["gap_fil_mt"] = fe["filipino_mps"] - fe["mother_tongue_mps"]
-    fe["gap_eng_mt"] = fe["english_mps"] - fe["mother_tongue_mps"]
-    fe["gap_num_mt"] = fe["numeracy_mps"] - fe["mother_tongue_mps"]
-    fe["gap_eng_fil"] = fe["english_mps"] - fe["filipino_mps"]
-
-    fe_cols = [
-        "school_id", "region", "division", "language_clean", "lang_pair_type",
-        "mt_not_assessed", "suspect_mt", "small_group", "n_test_takers",
-        "mother_tongue_mps", "filipino_mps", "english_mps", "numeracy_mps", "overall_mps",
-        "gap_fil_mt", "gap_eng_mt", "gap_num_mt", "gap_eng_fil",
-    ]
-    fe[fe_cols].to_csv("outputs/ellna_fe.csv", index=False)
-
-    print(f"Saved outputs/ellna_cleaned.csv ({ellna[cleaned_cols].shape}) and outputs/ellna_fe.csv ({fe[fe_cols].shape})")
-    print("Flag totals:", fe[["mt_not_assessed", "suspect_mt", "small_group"]].sum().to_dict())
-    print("Language counts:", fe["language_clean"].value_counts().to_dict())
-
-
+    
 if __name__ == "__main__":
     main()
